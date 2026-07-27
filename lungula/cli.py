@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import signal
 import sys
 from types import FrameType
@@ -58,6 +59,18 @@ def main() -> None:
         help="Also emit one NDJSON event per line on stdout (started/epoch_completed/"
         "stopped/completed/error) for programmatic consumption, alongside the normal "
         "human-readable output.",
+    )
+    train.add_argument(
+        "--stop-file",
+        default=None,
+        dest="stop_file",
+        help="Path checked for existence after each epoch; if present, stop gracefully "
+        "at the next checkpoint boundary. This is the mechanism a remote controller "
+        "(Natsume's lungula_runner.ts) should use instead of killing the process:  on "
+        "Windows, Node's ChildProcess.kill() cannot deliver a real POSIX signal to a "
+        "child process — it force-terminates instead, which is the exact "
+        "un-graceful-stop problem this whole feature exists to fix. SIGTERM/SIGINT "
+        "still work for direct interactive use (a human's own Ctrl-C).",
     )
 
     games_cmd = sub.add_parser("games", help="List available game plugins")
@@ -125,12 +138,18 @@ def _cmd_train(args: argparse.Namespace) -> None:
         model, device, lr=args.lr, grad_clip=grad_clip, scheduler_patience=args.scheduler_patience
     )
 
-    # Cooperative stop: a caller controlling this process (Natsume's lungula_runner.ts,
-    # or a human hitting Ctrl-C) asks for a graceful stop via SIGTERM/SIGINT rather than
-    # a hard kill. Trainer.fit() only checks this between epochs — after that epoch's
-    # checkpoint is already on disk — so a stop never loses progress or leaves a
-    # half-written checkpoint, unlike the raw Ctrl-C that produced the interrupted,
-    # never-converged run behind CLAUDE.md's C-009.
+    # Cooperative stop: a caller controlling this process asks for a graceful stop
+    # rather than a hard kill. Trainer.fit() only checks this between epochs — after
+    # that epoch's checkpoint is already on disk — so a stop never loses progress or
+    # leaves a half-written checkpoint, unlike the raw Ctrl-C that produced the
+    # interrupted, never-converged run behind CLAUDE.md's C-009.
+    #
+    # Two independent triggers, because neither alone covers every real caller:
+    #   - SIGTERM/SIGINT: works for a human's own Ctrl-C in an interactive terminal.
+    #   - --stop-file: what a remote controller (Natsume's lungula_runner.ts) must use
+    #     instead — on Windows, Node's ChildProcess.kill() cannot deliver a real POSIX
+    #     signal to a child process, it force-terminates instead, silently reproducing
+    #     the exact ungraceful-stop problem this feature exists to fix.
     stop_requested = False
 
     def _request_stop(signum: int, frame: FrameType | None) -> None:
@@ -142,7 +161,8 @@ def _cmd_train(args: argparse.Namespace) -> None:
 
     def on_epoch(entry: dict[str, Any]) -> bool:
         _emit(args, {"type": "epoch_completed", **entry})
-        return not stop_requested
+        stop_file_present = bool(args.stop_file) and os.path.exists(args.stop_file)
+        return not (stop_requested or stop_file_present)
 
     _emit(args, {"type": "started", "totalEpochs": args.epochs, "device": str(device)})
 
