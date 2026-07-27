@@ -1,5 +1,6 @@
 """Tests for core.export.onnx_exporter — ONNX export and inference."""
 
+import json
 import os
 import pathlib
 
@@ -59,3 +60,40 @@ class TestOnnxExporter:
         ort_out = sess.run(None, {"context": x.numpy()})[0]
 
         assert np.allclose(torch_out, ort_out, atol=1e-5)
+
+    def test_writes_a_provenance_manifest_alongside_the_export(
+        self, model: LSTMAgent, tmp_path: pathlib.Path
+    ) -> None:
+        # This is the actual fix for CLAUDE.md's C-009: a model with no recorded
+        # provenance (which checkpoint, which epoch, what loss it reached) is how an
+        # interrupted, never-converged run silently ended up wired into production.
+        path = str(tmp_path / "model.onnx")
+        export_onnx(
+            model,
+            path,
+            window=16,
+            source_checkpoint="checkpoints/epoch_041.pt",
+            epoch=41,
+            train_loss=0.05,
+            val_loss=0.0475,
+        )
+        manifest_path = pathlib.Path(f"{path}.manifest.json")
+        assert manifest_path.exists()
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert manifest["sourceCheckpoint"] == "checkpoints/epoch_041.pt"
+        assert manifest["epoch"] == 41
+        assert manifest["trainLoss"] == 0.05
+        assert manifest["valLoss"] == 0.0475
+        assert manifest["window"] == 16
+        assert manifest["featureDim"] == 10
+        assert manifest["actionDim"] == 4
+        assert "exportedAt" in manifest
+
+    def test_manifest_fields_default_to_none_when_provenance_not_given(
+        self, model: LSTMAgent, tmp_path: pathlib.Path
+    ) -> None:
+        path = str(tmp_path / "model.onnx")
+        export_onnx(model, path, window=16)
+        manifest = json.loads(pathlib.Path(f"{path}.manifest.json").read_text(encoding="utf-8"))
+        assert manifest["sourceCheckpoint"] is None
+        assert manifest["epoch"] is None
