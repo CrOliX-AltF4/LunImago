@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import glob
 import os
-from collections.abc import Sized
+from collections.abc import Callable, Sized
 from typing import Any, cast
 
 import torch
@@ -27,12 +27,13 @@ class Trainer:
         lr: float = 1e-3,
         val_split: float = 0.1,
         grad_clip: float = 1.0,
+        scheduler_patience: int = 5,
     ) -> None:
         self.model = model.to(device)
         self.device = device
         self.grad_clip = grad_clip
         self.opt = AdamW(model.parameters(), lr=lr)
-        self.scheduler = ReduceLROnPlateau(self.opt, patience=5, factor=0.5)
+        self.scheduler = ReduceLROnPlateau(self.opt, patience=scheduler_patience, factor=0.5)
         self.loss_fn = nn.MSELoss()
         self.val_split = val_split
 
@@ -43,7 +44,16 @@ class Trainer:
         batch_size: int = 128,
         checkpoint_dir: str | None = None,
         resume: bool = False,
+        on_epoch: Callable[[dict[str, Any]], bool | None] | None = None,
     ) -> list[dict[str, Any]]:
+        """Trains for up to `epochs` epochs.
+
+        `on_epoch`, if given, is called once per completed epoch — after that epoch's
+        checkpoint has already been written, so a stop request never loses progress.
+        Returning `False` stops training after that epoch; any other return value
+        (including None) continues. Callers can tell an early stop apart from a full
+        run by checking whether the last entry's "epoch" equals `epochs`.
+        """
         start_epoch = 1
         if resume and checkpoint_dir and os.path.isdir(checkpoint_dir):
             saved = sorted(glob.glob(f"{checkpoint_dir}/epoch_*.pt"))
@@ -87,6 +97,9 @@ class Trainer:
                     self.model.state_dict(),
                     f"{checkpoint_dir}/epoch_{epoch:03d}.pt",
                 )
+
+            if on_epoch is not None and on_epoch(history[-1]) is False:
+                break
 
         return history
 

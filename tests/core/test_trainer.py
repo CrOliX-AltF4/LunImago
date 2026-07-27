@@ -2,6 +2,7 @@
 
 import os
 import pathlib
+from typing import Any
 
 import pytest
 import torch
@@ -95,3 +96,43 @@ class TestTrainer:
         files = os.listdir(ckpt_dir)
         assert len(files) == 2
         assert all(f.endswith(".pt") for f in files)
+
+    def test_on_epoch_called_once_per_epoch(
+        self, trainer: Trainer, tiny_dataset: TensorDataset
+    ) -> None:
+        calls: list[dict[str, Any]] = []
+
+        def record(entry: dict[str, Any]) -> None:
+            calls.append(entry)
+
+        trainer.fit(tiny_dataset, epochs=3, batch_size=16, on_epoch=record)
+        assert len(calls) == 3
+        assert [c["epoch"] for c in calls] == [1, 2, 3]
+
+    def test_on_epoch_returning_false_stops_training_early(
+        self, trainer: Trainer, tiny_dataset: TensorDataset
+    ) -> None:
+        history = trainer.fit(
+            tiny_dataset, epochs=5, batch_size=16, on_epoch=lambda entry: entry["epoch"] < 2
+        )
+        # Runs epoch 1 (on_epoch returns True, continue), epoch 2 (on_epoch returns
+        # False, stop) — never reaches epoch 3, unlike a full 5-epoch run.
+        assert len(history) == 2
+        assert history[-1]["epoch"] == 2
+
+    def test_stopping_early_still_writes_the_last_epoch_checkpoint(
+        self, trainer: Trainer, tiny_dataset: TensorDataset, tmp_path: pathlib.Path
+    ) -> None:
+        # A graceful stop must never lose the checkpoint for the epoch it stopped on —
+        # that's the entire point of checking on_epoch after the checkpoint write, not
+        # before it (see the comment in Trainer.fit's docstring).
+        ckpt_dir = str(tmp_path / "ckpts")
+        trainer.fit(
+            tiny_dataset,
+            epochs=5,
+            batch_size=16,
+            checkpoint_dir=ckpt_dir,
+            on_epoch=lambda entry: entry["epoch"] < 2,
+        )
+        assert os.path.exists(f"{ckpt_dir}/epoch_002.pt")
+        assert not os.path.exists(f"{ckpt_dir}/epoch_003.pt")
