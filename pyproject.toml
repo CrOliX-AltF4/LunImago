@@ -36,6 +36,11 @@ packages = ["lungula"]
 line-length = 100
 target-version = "py310"
 exclude = ["scripts/"]
+# README.md's illustrative snippets (e.g. the "Adding a game" walkthrough) are prose
+# documentation, not real source — newer ruff releases format Markdown code fences by
+# default (previously preview-only), which silently broke CI on the first push after
+# ruff picked up that change since `ruff>=0.4` here is unpinned. Docs aren't ruff's job.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
