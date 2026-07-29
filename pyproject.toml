@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lungula"
-version = "0.3.0"
+version = "0.4.0"
 description = "Game imitation learning framework — behavior cloning from replays to ONNX"
 requires-python = ">=3.10"
 dependencies = [
