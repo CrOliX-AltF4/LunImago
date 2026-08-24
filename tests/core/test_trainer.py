@@ -136,3 +136,25 @@ class TestTrainer:
         )
         assert os.path.exists(f"{ckpt_dir}/epoch_002.pt")
         assert not os.path.exists(f"{ckpt_dir}/epoch_003.pt")
+
+    def test_resume_continues_from_the_saved_epoch(
+        self, tiny_dataset: TensorDataset, tmp_path: pathlib.Path
+    ) -> None:
+        # Regression: torch.load(..., map_location=self.device) — a full torch.device
+        # object — round-trips through str() internally and breaks torch_directml's
+        # device() (expects an int index), raising "'>=' not supported between
+        # instances of 'torch.device' and 'int'". Only reproduces on a DirectML device,
+        # so this test (CPU-only, like the rest of this file) can't catch that specific
+        # crash — but it does guard the resume behavior itself: map_location="cpu" must
+        # still load correctly and hand off to the right next epoch.
+        ckpt_dir = str(tmp_path / "ckpts")
+        model = LSTMAgent(feature_dim=_FEATURE_DIM, action_dim=_ACTION_DIM, hidden_size=32)
+        first = Trainer(model, torch.device("cpu"), lr=1e-3)
+        first.fit(tiny_dataset, epochs=2, batch_size=16, checkpoint_dir=ckpt_dir)
+
+        resumed_model = LSTMAgent(feature_dim=_FEATURE_DIM, action_dim=_ACTION_DIM, hidden_size=32)
+        second = Trainer(resumed_model, torch.device("cpu"), lr=1e-3)
+        history = second.fit(
+            tiny_dataset, epochs=4, batch_size=16, checkpoint_dir=ckpt_dir, resume=True
+        )
+        assert [entry["epoch"] for entry in history] == [3, 4]

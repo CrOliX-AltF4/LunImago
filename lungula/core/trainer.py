@@ -59,7 +59,7 @@ class Trainer:
             saved = sorted(glob.glob(f"{checkpoint_dir}/epoch_*.pt"))
             if saved:
                 latest = saved[-1]
-                self.model.load_state_dict(torch.load(latest, map_location=self.device))
+                self.model.load_state_dict(torch.load(latest, map_location="cpu"))
                 # epoch_007.pt → start from epoch 8
                 start_epoch = int(os.path.basename(latest).split("_")[1].split(".")[0]) + 1
                 print(f"Resumed from {latest} — starting at epoch {start_epoch}")
